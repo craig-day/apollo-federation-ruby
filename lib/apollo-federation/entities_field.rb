@@ -40,13 +40,12 @@ module ApolloFederation
 
         # TODO: Use warden or schema?
         type = context.warden.get_type(typename)
-        if type.nil? || type.kind != GraphQL::TypeKinds::OBJECT
+        unless valid_entity_type?(type)
           # TODO: Raise a specific error class?
           raise "The _entities resolver tried to load an entity for type \"#{typename}\"," \
                 ' but no object type of that name was found in the schema'
         end
 
-        # TODO: What if the type is an interface?
         type_class = class_of_type(type)
 
         if type_class.underscore_reference_keys
@@ -57,17 +56,38 @@ module ApolloFederation
           end
         end
 
-        if type_class.respond_to?(:resolve_references)
-          results = type_class.resolve_references(references, context)
-        elsif type_class.respond_to?(:resolve_reference)
-          results = references.map { |reference| type_class.resolve_reference(reference, context) }
-        else
-          results = references
-        end
+        # TODO: should we check a type to see if it implements an interface and then check that interface
+        # for resolve_reference(s)?
+        results =
+          if type_class.respond_to?(:resolve_references)
+            type_class.resolve_references(references, context)
+          elsif type_class.respond_to?(:resolve_reference)
+            references.map { |reference| type_class.resolve_reference(reference, context) }
+          elsif type_class.include?(ApolloFederation::Interface)
+            # An interface entity must define resolve_reference(s) to support the @interfaceObject
+            # pattern where a reference is the interface name itself, not an implementing type
+            raise "The _entities resolver was asked to resolve type '#{typename}', which is an entity" \
+                  ' interface, but the interface did not define `resolve_references`'
+          else
+            references
+          end
 
         context.schema.after_lazy(results) do |resolved_results|
+          # If we get more results than asked for, the zip below will result in nil problems.
+          # We could alternatively flip the zip and base it on indices and then ignore "extra" results.
+          if resolved_results.size != indices.size
+            raise "The entities resolver for type '#{typename}' returned too many results:" \
+                  " expected #{indices.size}, received #{resolved_results.size}"
+          end
+
           resolved_results.zip(indices).each do |result, i|
             final_result[i] = context.schema.after_lazy(result) do |resolved_value|
+              # Need to explicitly trigger type resolution of an entity interface, because normal
+              # resolution will never return an interface as the type
+              if type_class.include?(ApolloFederation::Interface)
+                type = context.schema.resolve_type(type, resolved_value, context)
+              end
+
               # TODO: This isn't 100% correct: if (for some reason) 2 different resolve_reference
               # calls return the same object, it might not have the right type
               # Right now, apollo-federation just adds a __typename property to the result,
@@ -88,8 +108,15 @@ module ApolloFederation
 
     private
 
+    def valid_entity_type?(type)
+      return false if type.nil?
+
+      type.kind == GraphQL::TypeKinds::OBJECT || type.kind == GraphQL::TypeKinds::INTERFACE
+    end
+
     def class_of_type(type)
-      if defined?(GraphQL::ObjectType) && type.is_a?(GraphQL::ObjectType)
+      if (defined?(GraphQL::ObjectType) && type.is_a?(GraphQL::ObjectType)) ||
+         (defined?(GraphQL::InterfaceType) && type.is_a?(GraphQL::InterfaceType))
         type.metadata[:type_class]
       else
         type

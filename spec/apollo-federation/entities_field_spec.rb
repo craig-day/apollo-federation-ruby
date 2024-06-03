@@ -5,21 +5,25 @@ require 'graphql'
 require 'apollo-federation/schema'
 require 'apollo-federation/field'
 require 'apollo-federation/object'
+require 'apollo-federation/interface'
+require 'apollo-federation/spec_types'
 
 RSpec.describe ApolloFederation::EntitiesField do
   shared_examples 'entities field' do
-    let(:base_object) do
-      base_field = Class.new(GraphQL::Schema::Field) do
+    let(:base_field) do
+      Class.new(GraphQL::Schema::Field) do
         include ApolloFederation::Field
       end
-
+    end
+    let(:base_object) do
+      base_field_class = base_field
       Class.new(GraphQL::Schema::Object) do
         include ApolloFederation::Object
-        field_class base_field
+        field_class base_field_class
       end
     end
 
-    context 'when a type with the key directive doesn\'t exist' do
+    context 'when neither a type nor interface with the key exist' do
       it 'does not add the _entities field' do
         schema = Class.new(base_schema) do
         end
@@ -223,7 +227,7 @@ RSpec.describe ApolloFederation::EntitiesField do
               let(:typename) { 'TypeNotInSchema' }
 
               it 'raises' do
-                expect(-> { execute_query }).to raise_error(
+                expect { execute_query }.to raise_error(
                   /The _entities resolver tried to load an entity for type "TypeNotInSchema"/,
                 )
               end
@@ -582,6 +586,90 @@ RSpec.describe ApolloFederation::EntitiesField do
 
                   it { is_expected.to match_array [{ 'myId' => id.to_s, 'otherField' => 'data!' }] }
                   it { expect(errors).to be_nil }
+                end
+              end
+            end
+
+            context 'when typename corresponds to an interface that exists in the schema' do
+              let(:schema) do
+                Class.new(base_schema) do
+                  orphan_types SpecTypes::InvalidInterface, SpecTypes::InvalidImplementation,
+                               SpecTypes::UserType, SpecTypes::AdminType, SpecTypes::CustomerType
+                end
+              end
+              let(:query) do
+                <<~GRAPHQL
+                  query EntitiesQuery($representations: [_Any!]!) {
+                    _entities(representations: $representations) {
+                      ... on User {
+                        id
+                        name
+                      }
+                    }
+                  }
+                GRAPHQL
+              end
+              let(:typename) { SpecTypes::InvalidInterface.graphql_name }
+
+              context 'when the interface does not define a resolve_reference method' do
+                it 'raises' do
+                  expect { execute_query }.to raise_error(
+                    Regexp.new(
+                      "The _entities resolver was asked to resolve type 'InvalidInterface', which is" \
+                      ' an entity interface, but the interface did not define `resolve_references`',
+                    )
+                  )
+                end
+              end
+
+              context 'when the interface defines resolve_references' do
+                let(:typename) { SpecTypes::UserType.graphql_name }
+                let(:references) { [] }
+
+                before do
+                  allow(SpecTypes::UserType).to receive(:resolve_references).and_return(references)
+                end
+
+                context 'when the interface does not define resolve_type' do
+                  it 'raises' do
+                    expect { execute_query }.to raise_error(
+                      /a `resolve_type` proc on your schema and that value `.*?` gets resolved to a valid type/,
+                    )
+                  end
+                end
+
+                context 'when the interface defines resolve_type' do
+                  let(:resolved_type) { SpecTypes::AdminType }
+
+                  before do
+                    allow(SpecTypes::UserType).to receive(:resolve_type).and_return(resolved_type)
+                  end
+
+                  context 'when returning objects' do
+                    let(:references) do
+                      [SpecTypes::User.new('123', 'Adam Admin')]
+                    end
+
+                    it {
+                      expect(subject).to match_array [
+                        { 'id' => id.to_s, 'name' => 'Adam Admin' },
+                      ]
+                    }
+                    it { expect(errors).to be_nil }
+                  end
+
+                  context 'when returning hashes' do
+                    let(:references) do
+                      [{ id: '123', name: 'Adam Admin' }]
+                    end
+
+                    it {
+                      expect(subject).to match_array [
+                        { 'id' => id.to_s, 'name' => 'Adam Admin' },
+                      ]
+                    }
+                    it { expect(errors).to be_nil }
+                  end
                 end
               end
             end
