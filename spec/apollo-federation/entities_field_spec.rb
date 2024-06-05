@@ -6,7 +6,6 @@ require 'apollo-federation/schema'
 require 'apollo-federation/field'
 require 'apollo-federation/object'
 require 'apollo-federation/interface'
-require 'apollo-federation/spec_types'
 
 RSpec.describe ApolloFederation::EntitiesField do
   shared_examples 'entities field' do
@@ -591,16 +590,52 @@ RSpec.describe ApolloFederation::EntitiesField do
             end
 
             context 'when typename corresponds to an interface that exists in the schema' do
+              let(:reference_resolver) { nil }
+              let(:type_resolver) { nil }
+              let(:base_interface) do
+                base_field_class = base_field
+                Module.new do
+                  include GraphQL::Schema::Interface
+                  include ApolloFederation::Interface
+                  field_class base_field_class
+                end
+              end
+              let(:interface_type) do
+                base_interface_class = base_interface
+                resolve_reference_pointer = reference_resolver
+                resolve_type_pointer = type_resolver
+                Module.new do
+                  include base_interface_class
+                  graphql_name 'User'
+                  key fields: :id
+                  field :id, 'ID', null: false
+                  field :name, 'String', null: false
+                  definition_methods do
+                    define_method(:resolve_references, &resolve_reference_pointer) unless resolve_reference_pointer.nil?
+                    define_method(:resolve_type, &resolve_type_pointer) unless resolve_type_pointer.nil?
+                  end
+                end
+              end
+              let(:object_type) do
+                interface_class = interface_type
+                Class.new(base_object) do
+                  implements interface_class
+                  graphql_name 'Admin'
+                  key fields: :id
+                end
+              end
               let(:schema) do
+                interface_class = interface_type
+                object_class = object_type
                 Class.new(base_schema) do
-                  orphan_types SpecTypes::InvalidInterface, SpecTypes::InvalidImplementation,
-                               SpecTypes::UserType, SpecTypes::AdminType, SpecTypes::CustomerType
+                  orphan_types interface_class, object_class
                 end
               end
               let(:query) do
                 <<~GRAPHQL
                   query EntitiesQuery($representations: [_Any!]!) {
                     _entities(representations: $representations) {
+                      __typename
                       ... on User {
                         id
                         name
@@ -609,21 +644,20 @@ RSpec.describe ApolloFederation::EntitiesField do
                   }
                 GRAPHQL
               end
-              let(:typename) { SpecTypes::InvalidInterface.graphql_name }
+              let(:typename) { interface_type.graphql_name }
 
               context 'when the interface does not define a resolve_reference method' do
                 it 'raises' do
                   expect { execute_query }.to raise_error(
                     Regexp.new(
-                      "The _entities resolver was asked to resolve type 'InvalidInterface', which is" \
+                      "The _entities resolver was asked to resolve type 'User', which is" \
                       ' an entity interface, but the interface did not define `resolve_references`',
-                    )
+                    ),
                   )
                 end
               end
 
               context 'when the interface defines resolve_references' do
-                let(:typename) { SpecTypes::UserType.graphql_name }
                 let(:id_1) { '123' }
                 let(:id_2) { '456' }
                 let(:representations) do
@@ -632,63 +666,67 @@ RSpec.describe ApolloFederation::EntitiesField do
                     { __typename: typename, id: id_2 },
                   ]
                 end
-                let(:references) do
-                  [
-                    { id: id_1 },
-                    { id: id_2 },
-                  ]
+                let(:reference_resolver) do
+                  lambda do |_references, _context|
+                    [
+                      { id: '123' },
+                      { id: '456' },
+                    ]
+                  end
                 end
 
-                before do
-                  allow(SpecTypes::UserType).to receive(:resolve_references).and_return(references)
-                end
-
-                # TODO: This test is not right, do we need to test all combinations of having
-                # resolve_references and resolve_type defined/missing?
                 context 'when the interface does not define resolve_type' do
                   it 'raises' do
                     expect { execute_query }.to raise_error(
-                      /a `resolve_type` proc on your schema and that value `.*?` gets resolved to a valid type/,
+                      /\.resolve_type\(type, obj, ctx\) must be implemented to use Union types or Interface types/,
                     )
                   end
                 end
 
                 context 'when the interface defines resolve_type' do
-                  let(:resolved_type) { SpecTypes::AdminType }
-
-                  before do
-                    allow(SpecTypes::UserType).to receive(:resolve_type).and_return(resolved_type)
+                  let(:type_resolver) do
+                    lambda do |_object, context|
+                      # We only reach out to warden here to avoid circular let statements. If the
+                      # test did not define anonymous classes/modules for types then we could use
+                      # a real class here as most implementations likely will.
+                      context.warden.get_type('Admin')
+                    end
                   end
 
                   context 'when returning objects' do
-                    let(:references) do
-                      [
-                        SpecTypes::User.new('123', 'Adam Admin'),
-                        SpecTypes::User.new('456', 'Amy Admin'),
-                      ]
+                    let(:reference_resolver) do
+                      admin = Struct.new(:id, :name)
+                      lambda do |_references, _context|
+                        [
+                          admin.new('123', 'Adam Admin'),
+                          admin.new('456', 'Amy Admin'),
+                        ]
+                      end
                     end
 
                     it {
                       expect(subject).to match_array [
-                        { 'id' => id_1.to_s, 'name' => 'Adam Admin' },
-                        { 'id' => id_2.to_s, 'name' => 'Amy Admin' },
+                        { '__typename' => 'Admin', 'id' => id_1.to_s, 'name' => 'Adam Admin' },
+                        { '__typename' => 'Admin', 'id' => id_2.to_s, 'name' => 'Amy Admin' },
                       ]
                     }
                     it { expect(errors).to be_nil }
                   end
 
                   context 'when returning hashes' do
-                    let(:references) do
-                      [
-                        { id: '123', name: 'Adam Admin' },
-                        { id: '456', name: 'Amy Admin' }
-                      ]
+                    let(:reference_resolver) do
+                      lambda do |_references, _context|
+                        [
+                          { id: '123', name: 'Adam Admin' },
+                          { id: '456', name: 'Amy Admin' },
+                        ]
+                      end
                     end
 
                     it {
                       expect(subject).to match_array [
-                        { 'id' => id_1.to_s, 'name' => 'Adam Admin' },
-                        { 'id' => id_2.to_s, 'name' => 'Amy Admin' },
+                        { '__typename' => 'Admin', 'id' => id_1.to_s, 'name' => 'Adam Admin' },
+                        { '__typename' => 'Admin', 'id' => id_2.to_s, 'name' => 'Amy Admin' },
                       ]
                     }
                     it { expect(errors).to be_nil }
