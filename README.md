@@ -269,6 +269,18 @@ class User < BaseObject
 end
 ```
 
+### The `@interfaceObject` directive (Apollo Federation v2.3)
+
+[Apollo documentation](https://www.apollographql.com/docs/federation/federated-types/federated-directives#interfaceobject)
+
+Call `interface_object` within your class definition:
+
+```ruby
+class User < BaseObject
+  interface_object
+end
+```
+
 ### The `@override` directive (Apollo Federation v2)
 
 [Apollo documentation](https://www.apollographql.com/docs/federation/federated-types/federated-directives/#override)
@@ -355,6 +367,41 @@ class BaseObject < GraphQL::Schema::Object
 
   field_class BaseField
   underscore_reference_keys true
+end
+```
+
+### Reference resolvers for entity interfaces
+
+[Apollo documentation](https://www.apollographql.com/docs/federation/federated-types/interfaces/#required-resolvers)
+
+Entity interface reference resolvers have the same API as [object reference resolvers](#reference-resolvers), but `resolve_reference` should be defined within `definition_methods`.
+Additionally, you should also define a `resolve_type` method because an `interface` cannot be returned in the `_Entity` union.
+
+```ruby
+module User
+  include BaseInterface
+
+  definition_methods do
+    def resolve_reference(reference, context)
+      USERS.find { |user| user[:user_id] == reference[:user_id] }
+    end
+
+    def resolve_type(object, context)
+      if object[:role] == "admin"
+        Admin
+      else
+        Customer
+      end
+    end
+  end
+end
+
+class Admin < BaseObject
+  implements User
+end
+
+class Customer < BaseObject
+  implements User
 end
 ```
 
