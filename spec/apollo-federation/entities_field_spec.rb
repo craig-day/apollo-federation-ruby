@@ -590,6 +590,17 @@ RSpec.describe ApolloFederation::EntitiesField do
             end
 
             context 'when typename corresponds to an interface that exists in the schema' do
+              let(:lazy_resolver) do
+                Class.new do
+                  def initialize(&callable)
+                    @callable = callable
+                  end
+
+                  def resolve
+                    @callable.call
+                  end
+                end
+              end
               let(:reference_resolver) { nil }
               let(:type_resolver) { nil }
               let(:base_interface) do
@@ -722,6 +733,46 @@ RSpec.describe ApolloFederation::EntitiesField do
                         ]
                       end
                     end
+
+                    it {
+                      expect(subject).to match_array [
+                        { '__typename' => 'Admin', 'id' => id_1.to_s, 'name' => 'Adam Admin' },
+                        { '__typename' => 'Admin', 'id' => id_2.to_s, 'name' => 'Amy Admin' },
+                      ]
+                    }
+                    it { expect(errors).to be_nil }
+                  end
+
+                  context 'when resolve_references returns a lazy object' do
+                    let(:lazy_schema) do
+                      lazy_resolver_class = lazy_resolver
+                      interface_class = interface_type
+                      object_class = object_type
+                      Class.new(base_schema) do
+                        lazy_resolve(lazy_resolver_class, :resolve)
+                        orphan_types interface_class, object_class
+                      end
+                    end
+                    let(:schema) { lazy_schema }
+                    let(:reference_resolver) do
+                      lazy_resolver_class = lazy_resolver
+                      lambda do |_references, _context|
+                        lazy_resolver_class.new do
+                          [
+                            { id: 123, name: 'Adam Admin' },
+                            { id: 456, name: 'Amy Admin' },
+                          ]
+                        end
+                      end
+                    end
+                    # let(:type_resolver) do
+                    #   lazy_resolver_class = lazy_resolver
+                    #   lambda do |_object, context|
+                    #     lazy_resolver_class.new do
+                    #       context.warden.get_type('Admin')
+                    #     end
+                    #   end
+                    # end
 
                     it {
                       expect(subject).to match_array [

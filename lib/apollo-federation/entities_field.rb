@@ -26,7 +26,6 @@ module ApolloFederation
       end
     end
 
-    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def _entities(representations:)
       final_result = Array.new(representations.size)
       grouped_references_with_indices =
@@ -71,37 +70,15 @@ module ApolloFederation
             references
           end
 
+        context[:resolved_references] ||= {}
         context.schema.after_lazy(results) do |resolved_results|
-          # If we get more results than asked for, the zip below will result in nil problems.
-          # We could alternatively flip the zip and base it on indices and then ignore "extra" results.
-          if resolved_results.size != indices.size
-            raise "The entities resolver for type '#{typename}' returned wrong number of results:" \
-                  " expected #{indices.size}, received #{resolved_results.size}"
-          end
-
           resolved_results.zip(indices).each do |result, i|
             final_result[i] = context.schema.after_lazy(result) do |resolved_value|
-              # Need to explicitly trigger type resolution of an entity interface, because normal
-              # resolution will never return an interface as the type
-              if type_class.include?(ApolloFederation::Interface)
-                # type = context.schema.resolve_type(type, resolved_value, context)
-                resolved_type_result = context.schema.resolve_type(type, resolved_value, context)
-
-                # TODO: In GraphQL::Schema, the processing of this call will prefer the value returned
-                # in the tuple. Should we also do that, or do we want to stick with using resolved_value as-is?
-                type =
-                  if resolved_type_result.is_a?(Array) && resolved_type_result.size == 2
-                    resolved_type_result.first
-                  else
-                    resolved_type_result
-                  end
-              end
-
               # TODO: This isn't 100% correct: if (for some reason) 2 different resolve_reference
               # calls return the same object, it might not have the right type
               # Right now, apollo-federation just adds a __typename property to the result,
               # but I don't really like the idea of modifying the resolved object
-              context[resolved_value] = type
+              context[:resolved_references][resolved_value] = type
               resolved_value
             end
           end
@@ -114,7 +91,6 @@ module ApolloFederation
         final_result
       end
     end
-    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     private
 
