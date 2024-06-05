@@ -26,6 +26,7 @@ module ApolloFederation
       end
     end
 
+    # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     def _entities(representations:)
       final_result = Array.new(representations.size)
       grouped_references_with_indices =
@@ -56,8 +57,6 @@ module ApolloFederation
           end
         end
 
-        # TODO: should we check a type to see if it implements an interface and then check that interface
-        # for resolve_reference(s)?
         results =
           if type_class.respond_to?(:resolve_references)
             type_class.resolve_references(references, context)
@@ -115,6 +114,7 @@ module ApolloFederation
         final_result
       end
     end
+    # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
     private
 
