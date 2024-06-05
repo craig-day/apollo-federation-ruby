@@ -76,7 +76,7 @@ module ApolloFederation
           # If we get more results than asked for, the zip below will result in nil problems.
           # We could alternatively flip the zip and base it on indices and then ignore "extra" results.
           if resolved_results.size != indices.size
-            raise "The entities resolver for type '#{typename}' returned too many results:" \
+            raise "The entities resolver for type '#{typename}' returned wrong number of results:" \
                   " expected #{indices.size}, received #{resolved_results.size}"
           end
 
@@ -85,7 +85,17 @@ module ApolloFederation
               # Need to explicitly trigger type resolution of an entity interface, because normal
               # resolution will never return an interface as the type
               if type_class.include?(ApolloFederation::Interface)
-                type = context.schema.resolve_type(type, resolved_value, context)
+                # type = context.schema.resolve_type(type, resolved_value, context)
+                resolved_type_result = context.schema.resolve_type(type, resolved_value, context)
+
+                # TODO: In GraphQL::Schema, the processing of this call will prefer the value returned
+                # in the tuple. Should we also do that, or do we want to stick with using resolved_value as-is?
+                type =
+                  if resolved_type_result.is_a?(Array) && resolved_type_result.size == 2
+                    resolved_type_result.first
+                  else
+                    resolved_type_result
+                  end
               end
 
               # TODO: This isn't 100% correct: if (for some reason) 2 different resolve_reference

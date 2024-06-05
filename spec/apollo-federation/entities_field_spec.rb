@@ -624,12 +624,27 @@ RSpec.describe ApolloFederation::EntitiesField do
 
               context 'when the interface defines resolve_references' do
                 let(:typename) { SpecTypes::UserType.graphql_name }
-                let(:references) { [] }
+                let(:id_1) { '123' }
+                let(:id_2) { '456' }
+                let(:representations) do
+                  [
+                    { __typename: typename, id: id_1 },
+                    { __typename: typename, id: id_2 },
+                  ]
+                end
+                let(:references) do
+                  [
+                    { id: id_1 },
+                    { id: id_2 },
+                  ]
+                end
 
                 before do
                   allow(SpecTypes::UserType).to receive(:resolve_references).and_return(references)
                 end
 
+                # TODO: This test is not right, do we need to test all combinations of having
+                # resolve_references and resolve_type defined/missing?
                 context 'when the interface does not define resolve_type' do
                   it 'raises' do
                     expect { execute_query }.to raise_error(
@@ -647,12 +662,16 @@ RSpec.describe ApolloFederation::EntitiesField do
 
                   context 'when returning objects' do
                     let(:references) do
-                      [SpecTypes::User.new('123', 'Adam Admin')]
+                      [
+                        SpecTypes::User.new('123', 'Adam Admin'),
+                        SpecTypes::User.new('456', 'Amy Admin'),
+                      ]
                     end
 
                     it {
                       expect(subject).to match_array [
-                        { 'id' => id.to_s, 'name' => 'Adam Admin' },
+                        { 'id' => id_1.to_s, 'name' => 'Adam Admin' },
+                        { 'id' => id_2.to_s, 'name' => 'Amy Admin' },
                       ]
                     }
                     it { expect(errors).to be_nil }
@@ -660,12 +679,16 @@ RSpec.describe ApolloFederation::EntitiesField do
 
                   context 'when returning hashes' do
                     let(:references) do
-                      [{ id: '123', name: 'Adam Admin' }]
+                      [
+                        { id: '123', name: 'Adam Admin' },
+                        { id: '456', name: 'Amy Admin' }
+                      ]
                     end
 
                     it {
                       expect(subject).to match_array [
-                        { 'id' => id.to_s, 'name' => 'Adam Admin' },
+                        { 'id' => id_1.to_s, 'name' => 'Adam Admin' },
+                        { 'id' => id_2.to_s, 'name' => 'Amy Admin' },
                       ]
                     }
                     it { expect(errors).to be_nil }
